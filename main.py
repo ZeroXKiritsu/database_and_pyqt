@@ -1,20 +1,26 @@
-from subprocess import Popen, CREATE_NEW_CONSOLE
-P_LIST = []
+import subprocess
+
+PROCESS  = []
 
 while True:
-    USER = input("Запустить клиентов (s) / Закрыть клиентов (k) / Выйти (q) ")
-
-    if USER == 'q':
+     ACTION = input('please, choose the options: '
+                   's - launch server, '
+                   'x - close all windows, '
+                   'q - quit program: ')
+    
+     if ACTION == 'q':
         break
-
-    elif USER == 's':
-        P_LIST.append(Popen('python server.py', creationflags=CREATE_NEW_CONSOLE))
-        P_LIST.append(Popen('python client.py', creationflags=CREATE_NEW_CONSOLE))
-        P_LIST.append(Popen('python client.py -l', creationflags=CREATE_NEW_CONSOLE))
-        P_LIST.append(Popen('python client.py -l', creationflags=CREATE_NEW_CONSOLE))
-
-        print(' Запущены  несколько listen клиентов и клиент-писатель')
-    elif USER == 'k':
-        for p in P_LIST:
-            p.kill()
-        P_LIST.clear()
+     elif ACTION == 's':
+        clients_count = int(input('Enter number of consoles to launch: '))
+        # Запускаем сервер!
+        PROCESS.append(subprocess.Popen(
+            'python server.py',
+            creationflags=subprocess.CREATE_NEW_CONSOLE))
+        for i in range(clients_count):
+            PROCESS.append(subprocess.Popen(
+                f'python client.py -n {i + 1}',
+                creationflags=subprocess.CREATE_NEW_CONSOLE))
+     elif ACTION == 'x':
+        while PROCESS:
+            PROCESS.pop().kill()
+     

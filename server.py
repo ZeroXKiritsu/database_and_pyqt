@@ -1,161 +1,211 @@
+import socket
+import sys
+import argparse
+import json
 import logging
 import select
-from lib.vars import *
-from lib.utils import server_settings, create_socket, get_message, send_message
-from lib.descriptors import PortValidate, IPValidate
-from lib.metaclasses import ServerVerifier
+import time
+import threading
+import logs.server_log
+from shared.errors import *
+from shared.variables import *
+from shared.utils import *
+from shared.wrapper import log
+from shared.descriptors import Port
+from shared.metaclasses import ServerVerifier
+from database import ServerStorage
 
-SERVER_LOGGER = logging.getLogger('server')
+LOGGER = logging.getLogger('server')
 
-class Server(metaclass=ServerVerifier):
-    srv_port = PortValidate()
-    srv_adr = IPValidate()
 
-    def __init__(self, server_address, server_port):
-        self.srv_adr = server_address
-        self.srv_port = server_port
+@log
+def argument_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', default=DEFAULT_PORT, type=int, nargs='?')
+    parser.add_argument('-a', default='', nargs='?')
+    namespace = parser.parse_args(sys.argv[1:])
+    listen_address = namespace.a
+    listen_port = namespace.p
+    return listen_address, listen_port
+
+
+# main class of server
+class Server(threading.Thread, metaclass=ServerVerifier):
+    port = Port()
+
+    def __init__(self, listen_address, listen_port, database):
+        self.addr = listen_address
+        self.port = listen_port
+        self.database = database
         self.clients = []
         self.messages = []
         self.names = dict()
+        super().__init__()
 
     def init_socket(self):
-        transport = create_socket()
-        transport.bind((self.srv_adr, self.srv_port))
-        transport.settimeout(SERVER_TIMEOUT)
-        transport.listen(MAX_CONNECTIONS)
-        print(f"server start on: {self.srv_adr}:{self.srv_port}")
-        SERVER_LOGGER.info(f"server started on {self.srv_adr}:{self.srv_port}")
+        LOGGER.info(
+            f'server launched, port to connect: {self.port}, '
+            f'connections from: {self.addr}. '
+            f'If address not specified, all connections '
+            f'will be available')
+        transport = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        transport.bind((self.addr, self.port))
+        transport.settimeout(0.5)
 
-        self.socket_transport = transport
-        self.socket_transport.listen()
+        self.sock = transport
+        self.sock.listen()
 
-    def main_loop(self):
+ 
+    def run(self):
         self.init_socket()
-
         while True:
             try:
-                client, client_address = self.socket_transport.accept()
-                SERVER_LOGGER.debug(f'client | {client_address}')
+                client, client_address = self.sock.accept()
             except OSError:
                 pass
             else:
-                print(f"Получен запрос на соединение от {str(client_address)}")
-                SERVER_LOGGER.info(f"установлено соедниение с клиентом {client_address}")
+                LOGGER.info(f'connection with address {client_address} stabilized')
                 self.clients.append(client)
 
-            recv_data_lst = []
-            send_data_lst = []
+            income_list = []
+            outcome_list = []
             err_lst = []
-
             try:
                 if self.clients:
-                    recv_data_lst, send_data_lst, err_lst = select.select(self.clients, self.clients, [], 0)
+                    income_list, outcome_list, err_lst = \
+                        select.select(self.clients, self.clients, [], 0)
             except OSError:
                 pass
 
-            if recv_data_lst:
-                for client_with_message in recv_data_lst:
+            if income_list:
+                for client_with_message in income_list:
                     try:
-                        self.client_message_handler(get_message(client_with_message), client_with_message)
-                    except Exception:
-                        SERVER_LOGGER.info(f"клиент {client_with_message.getpeername()} отключился")
-                        print(f"клиент {client_with_message.getpeername()} отключился")
+                        self.income_message(get_message(
+                            client_with_message), client_with_message)
+
+                    except:
+                        LOGGER.info(
+                            f'user {client_with_message.getpeername()} '
+                            f'logged out')
                         self.clients.remove(client_with_message)
-                        print(self.clients)
 
             for message in self.messages:
                 try:
-                    self.process_message(message, send_data_lst)
+                    self.outcome_message(message, outcome_list)
+
                 except:
-                    SERVER_LOGGER.info(f'Связь с клиентом  {message[DESTINATION]} потеряна')
+                    LOGGER.info(f'connection with user '
+                                f'{message[DESTINATION]} is over')
                     self.clients.remove(self.names[message[DESTINATION]])
                     del self.names[message[DESTINATION]]
-                self.messages.clear()
+            self.messages.clear()
 
-    def process_message(self, message, listen_socks):
-        if message[DESTINATION] in self.names and self.names[message[DESTINATION]] in listen_socks:
+
+    def outcome_message(self, message, listen_socks):
+
+        if message[DESTINATION] in self.names and \
+                self.names[message[DESTINATION]] in listen_socks:
             send_message(self.names[message[DESTINATION]], message)
-            SERVER_LOGGER.info(f'Отправлено сообщение пользователю {message[DESTINATION]} '
-                               f'от пользователя {message[SENDER]}.')
-        elif message[DESTINATION] in self.names and self.names[message[DESTINATION]] not in listen_socks:
-            raise ConnectionError
-        else:
-            SERVER_LOGGER.error(f'Пользователь {message[DESTINATION]} не зарегистрирован на сервере, '
-                                f'отправка сообщения невозможна.')
 
-    def client_message_handler(self, message, client):
-        SERVER_LOGGER.debug(f'функция разбора message от клиента: {message}')
-        if ACTION not in message:
-            SERVER_LOGGER.error(f"сообщение от клиента не содержит обязательного поля ACTION: {message}")
-            print(f"сообщение от клиента не содержит обязательного поля ACTION: {message}")
-            send_message(client, {RESPONSE: 400, ERROR: ERR400})
-            return
-        elif TIME not in message:
-            SERVER_LOGGER.error(f"сообщение от клиента не содержит обязательного поля TIME: {message}")
-            print(f"сообщение от клиента не содержит обязательного поля TIME: {message}")
-            send_message(client, {RESPONSE: 400, ERROR: ERR400})
-            return
-        elif message[ACTION] == PRESENCE and str(message[USER][ACCOUNT_NAME]).lower() == 'guest':
-            SERVER_LOGGER.debug(f"сформировано PRESENCE сообщение:{message}")
-            # names[message[USER][ACCOUNT_NAME]] = client # пользователь гость, не добавляем в словарь пользователей
-            send_message(client, {RESPONSE: 200, ERROR: ERR200, MSG: str(f"Welcome, {message[USER][ACCOUNT_NAME]}")})
-            return
-        elif message[ACTION] == AUTH and USER in message and str(message[USER][ACCOUNT_NAME]).lower() != 'guest':
-            SERVER_LOGGER.info(f"Получено AUTH сообщение: {message}")
-            if str(message[USER][ACCOUNT_NAME]).lower() not in str(
-                    self.names.keys()).lower():  # нет такого, можно регать
-                SERVER_LOGGER.info(f"сформировано AUTH сообщение: {message}. Пользователь занесен в список")
+            LOGGER.info(
+                f'message to user {message[DESTINATION]} '
+                f'by user {message[SENDER]}.')
+
+        elif message[DESTINATION] in self.names and \
+                self.names[message[DESTINATION]] not in listen_socks:
+            raise ConnectionError
+
+        else:
+            LOGGER.error(
+                f'user {message[DESTINATION]} not logged, '
+                f'sending is unavailable.')
+
+   
+    def income_message(self, message, client):
+
+        LOGGER.debug(f'Parsing a message from a client : {message}')
+        if ACTION in message and message[ACTION] == PRESENCE and \
+                TIME in message and USER in message:
+
+            if message[USER][ACCOUNT_NAME] not in self.names.keys():
                 self.names[message[USER][ACCOUNT_NAME]] = client
-                send_message(client,
-                             {RESPONSE: 200, ERROR: ERROR_200, MSG: str(f"Welcome, {message[USER][ACCOUNT_NAME]}")})
-                return
+                client_ip, client_port = client.getpeername()
+                self.database.user_login(
+                    message[USER][ACCOUNT_NAME], client_ip, client_port)
+                send_message(client, RESPONSE_200)
+
             else:
-                SERVER_LOGGER.error(f"{ERROR_USER_ALREADY_EXIST}: {message}")
                 response = RESPONSE_400
-                response[ERROR] = ERROR_USER_ALREADY_EXIST
+                response[ERROR] = 'User name is occupied.'
                 send_message(client, response)
                 self.clients.remove(client)
                 client.close()
             return
-        elif message[ACTION] == MSG and DESTINATION in message and SENDER in message and MSG_TEXT in message:
-            SERVER_LOGGER.debug(f"сформировано MSG сообщение: {message}")
-            self.messages.append((message))
+
+        elif ACTION in message and message[ACTION] == MESSAGE and \
+                DESTINATION in message and TIME in message \
+                and SENDER in message and MESSAGE_TEXT in message:
+            self.messages.append(message)
             return
-        elif ACTION in message and message[ACTION] == WHO:
-            SERVER_LOGGER.debug(f"сформировано WHO сообщение: {message}")
-            message[DESTINATION] = message[SENDER]
-            all_names = ''
-            for el in self.names:
-                all_names = all_names + ' | ' + el
-            all_names = f"пользователи в сети:\n{all_names[3:]}"
-            message[MSG_TEXT] = all_names
-            self.messages.append((message))
-            return
-        elif ACTION in message and message[ACTION] == EXIT and ACCOUNT_NAME in message:
-            SERVER_LOGGER.info(f"пользователь {message[ACCOUNT_NAME]} вышел")
-            print(f"пользователь {message[ACCOUNT_NAME]} вышел")
+
+        elif ACTION in message and message[ACTION] == EXIT \
+                and ACCOUNT_NAME in message:
+            self.database.user_logout(message[ACCOUNT_NAME])
             self.clients.remove(self.names[message[ACCOUNT_NAME]])
             self.names[message[ACCOUNT_NAME]].close()
             del self.names[message[ACCOUNT_NAME]]
-            print(self.names)
             return
+
         else:
-            SERVER_LOGGER.error(f"функция разбора message от клиента, ни одно из условий не подошло: {message}")
-            print(f"функция разбора message от клиента, ни одно из условий не подошло: {message}")
             response = RESPONSE_400
-            response[ERROR] = 'Запрос некорректен.'
+            response[ERROR] = 'Incorrect request.'
             send_message(client, response)
             return
 
-    def start_server(self):
-        srv_settings = server_settings()
-        server_address = srv_settings[0]
-        server_port = srv_settings[1]
-        SERVER_LOGGER.debug(f"srv_settings:{server_address}:{server_port}")
-        server = Server(server_address, server_port)
-        # print(f"server start on: {server_address}:{server_port}")
-        server.main_loop()
+
+def print_help():
+    print('Commands: ')
+    print('users - to call list of registred users ')
+    print('connected - to call list of users online ')
+    print('log - to show history of users enterance ')
+    print('exit - to stop server process ')
+    print('help - to call help menu')
+
+
+
+def server_launcher():
+    listen_address, listen_port = argument_parser()
+    database = ServerStorage()
+    server = Server(listen_address, listen_port, database)
+    server.daemon = True
+    server.start()
+
+    print_help()
+
+    while True:
+        command = input('Enter command: ')
+        if command == 'help':
+            print_help()
+        elif command == 'exit':
+            break
+        elif command == 'users':
+            for user in sorted(database.users_list()):
+                print(f'user {user[0]}, last login: {user[1]}')
+        elif command == 'connected':
+            for user in sorted(database.active_users_list()):
+                print(
+                    f'user {user[0]}, connected: {user[1]}:{user[2]}, '
+                    f'connection setup time {user[3]}'
+                )
+        elif command == 'log':
+            name = input("Enter name of user to see log history. "
+                         "To call all history just push 'enter': ")
+            for user in sorted(database.login_history(name)):
+                print(f"User: {user[0]}, logged from: {user[1]}. "
+                      f"Entered from: {user[2]}:{user[3]}")
+            else:
+                print("Unknown command.")
 
 
 if __name__ == '__main__':
-    Server.start_server()
+    server_launcher()

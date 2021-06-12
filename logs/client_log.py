@@ -1,25 +1,29 @@
 import sys
 import os
-from datetime import datetime
 import logging
 
 sys.path.append('../')
-from lib.vars import LOG_LEVEL, ENCODING, LOG_FORMATTING
+from shared.variables import LOGGING_LEVEL
 
-CLIENT_FORMATTING = logging.Formatter(LOG_FORMATTING)
+CLIENT_FORMATTER = logging.Formatter(
+    '%(asctime)s %(levelname)s %(filename)s %(message)s')
 
 PATH = os.path.dirname(os.path.abspath(__file__))
-PATH = os.path.join(PATH, 'client_' + datetime.now().strftime("%Y%m%d_%H%M%S") + '.log')
+PATH = os.path.join(PATH, 'client.log')
 
-LOG_FILE = logging.FileHandler(PATH, encoding=ENCODING)
-LOG_FILE.setFormatter(CLIENT_FORMATTING)
+STREAM_HANDLER = logging.StreamHandler(sys.stderr)
+STREAM_HANDLER.setFormatter(CLIENT_FORMATTER)
+STREAM_HANDLER.setLevel(logging.ERROR)
+LOG_FILE = logging.FileHandler(PATH, encoding='utf8')
+LOG_FILE.setFormatter(CLIENT_FORMATTER)
 
 LOGGER = logging.getLogger('client')
+LOGGER.addHandler(STREAM_HANDLER)
 LOGGER.addHandler(LOG_FILE)
-LOGGER.setLevel(LOG_LEVEL)
+LOGGER.setLevel(LOGGING_LEVEL)
 
 if __name__ == '__main__':
-    LOGGER.critical('Критическая ошибка')
-    LOGGER.error('Ошибка')
-    LOGGER.debug('Отладка')
-    LOGGER.info('Информация')
+    LOGGER.critical('Critical error')
+    LOGGER.error('Error')
+    LOGGER.debug('Debug information')
+    LOGGER.info('Info message')

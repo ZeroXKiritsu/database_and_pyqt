@@ -1,7 +1,6 @@
 class IncorrectDataRecivedError(Exception):
     def __str__(self):
-        return 'Принято некорректное сообщение от удалённого пользователя'
-
+        return 'Invalid message received from remote computer.'
 
 class ServerError(Exception):
     def __init__(self, text):
@@ -12,11 +11,11 @@ class ServerError(Exception):
 
 class NonDictInputError(Exception):
     def __str__(self):
-        return 'Аргумент функции должен быть словарём'
+        return 'The argument of the function must be a dictionary.'
 
 class ReqFieldMissingError(Exception):
     def __init__(self, missing_field):
         self.missing_field = missing_field
 
     def __str__(self):
-        return f'В принятом словаре отсутствует обязательное поле {self.missing_field}.'
+        return f'The accepted dictionary is missing a required field {self.missing_field}.'
