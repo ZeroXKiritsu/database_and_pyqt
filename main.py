@@ -12,7 +12,6 @@ while True:
         break
      elif ACTION == 's':
         clients_count = int(input('Enter number of consoles to launch: '))
-        # Запускаем сервер!
         PROCESS.append(subprocess.Popen(
             'python server.py',
             creationflags=subprocess.CREATE_NEW_CONSOLE))
