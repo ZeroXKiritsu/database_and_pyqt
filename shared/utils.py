@@ -1,26 +1,33 @@
 import json
 import sys
-from .variables import *
-from .errors import IncorrectDataRecivedError, NonDictInputError
-from .wrapper import log
+
+sys.path.append('../')
+from shared.variables import *
+from shared.wrapper import log
+
 
 @log
 def get_message(client):
+    """
+    Функция приёма сообщений от удалённых компьютеров.
+    Принимает сообщения JSON, декодирует полученное сообщение
+    и проверяет что получен словарь.
+    """
     encoded_response = client.recv(MAX_PACKAGE_LENGTH)
-    if isinstance(encoded_response, bytes):
-        json_response = encoded_response.decode(ENCODING)
-        response = json.loads(json_response)
-        if isinstance(response, dict):
-            return response
-        else:
-            raise IncorrectDataRecivedError
+    json_response = encoded_response.decode(ENCODING)
+    response = json.loads(json_response)
+    if isinstance(response, dict):
+        return response
     else:
-        raise IncorrectDataRecivedError
-    
+        raise TypeError
+
+
 @log
 def send_message(sock, message):
-    if not isinstance(message, dict):
-        raise NonDictInputError
+    """
+    Функция отправки словарей через сокет.
+    Кодирует словарь в формат JSON и отправляет через сокет.
+    """
     js_message = json.dumps(message)
     encoded_message = js_message.encode(ENCODING)
     sock.send(encoded_message)

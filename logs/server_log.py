@@ -2,29 +2,27 @@ import sys
 import logging
 import logging.handlers
 import os
-
 sys.path.append('../')
 from shared.variables import LOGGING_LEVEL
 
-SERVER_FORMATTER = logging.Formatter(
-    '%(asctime)s %(levelname)s %(filename)s %(message)s')
-PATH = os.path.dirname(os.path.abspath(__file__))
-PATH = os.path.join(PATH, 'server.log')
+server_formatter = logging.Formatter('%(asctime)s %(levelname)s %(filename)s %(message)s')
 
-STREAM_HANDLER = logging.StreamHandler(sys.stderr)
-STREAM_HANDLER.setFormatter(SERVER_FORMATTER)
-STREAM_HANDLER.setLevel(logging.INFO)
-LOG_FILE = logging.handlers.TimedRotatingFileHandler(
-    PATH, encoding='utf8', interval=1, when='D')
-LOG_FILE.setFormatter(SERVER_FORMATTER)
+path = os.path.dirname(os.path.abspath(__file__))
+path = os.path.join(path, 'server.log')
 
-LOGGER = logging.getLogger('server')
-LOGGER.addHandler(STREAM_HANDLER)
-LOGGER.addHandler(LOG_FILE)
-LOGGER.setLevel(LOGGING_LEVEL)
+steam = logging.StreamHandler(sys.stderr)
+steam.setFormatter(server_formatter)
+steam.setLevel(logging.INFO)
+log_file = logging.handlers.TimedRotatingFileHandler(path, encoding='utf8', interval=1, when='D')
+log_file.setFormatter(server_formatter)
+
+logger = logging.getLogger('server')
+logger.addHandler(steam)
+logger.addHandler(log_file)
+logger.setLevel(LOGGING_LEVEL)
 
 if __name__ == '__main__':
-    LOGGER.critical('Critical error')
-    LOGGER.error('Error')
-    LOGGER.debug('Debug information')
-    LOGGER.info('Info message')
+    logger.critical('Test critical event')
+    logger.error('Test error ivent')
+    logger.debug('Test debug ivent')
+    logger.info('Test info ivent')

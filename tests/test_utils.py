@@ -5,10 +5,11 @@ from shared.variables import *
 import unittest
 from shared.errors import NonDictInputError
 
+
 class TestSocket:
     def __init__(self, test_dict):
         self.testdict = test_dict
-    
+
     def send(self, message_to_send):
         json_test_message = json.dumps(self.testdict)
         self.encoded_message = json_test_message.encode(ENCODING)
@@ -17,6 +18,7 @@ class TestSocket:
     def recv(self, max_len):
         json_test_message = json.dumps(self.testdict)
         return json_test_message.encode(ENCODING)
+
 
 class Tests(unittest.TestCase):
     test_dict_send = {
@@ -38,7 +40,6 @@ class Tests(unittest.TestCase):
         self.assertEqual(test_socket.encoded_message, test_socket.receved_message)
         self.assertRaises(NonDictInputError, send_message, test_socket, 1111)
 
-    # тест функции приёма сообщения
     def test_get_message(self):
         test_sock_ok = TestSocket(self.test_dict_recv_ok)
         test_sock_err = TestSocket(self.test_dict_recv_err)

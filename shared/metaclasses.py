@@ -1,6 +1,12 @@
 import dis
 
-class ServerVerifier(type):
+
+class ServerMaker(type):
+    """
+    Метакласс, проверяющий что в результирующем классе нет клиентских
+    вызовов таких как: connect. Также проверяется, что серверный
+    сокет является TCP и работает по IPv4 протоколу.
+    """
     def __init__(cls, clsname, bases, clsdict):
         methods = []
         attrs = []
@@ -17,19 +23,20 @@ class ServerVerifier(type):
                     elif i.opname == 'LOAD_ATTR':
                         if i.argval not in attrs:
                             attrs.append(i.argval)
-        print(methods)
         if 'connect' in methods:
             raise TypeError(
-                'Usage of connect method in server class is impossible'
-            )
+                'Использование метода connect недопустимо в серверном классе')
         if not ('SOCK_STREAM' in attrs and 'AF_INET' in attrs):
-            raise TypeError(
-                'Incorrect socket initialization'
-            )
+            raise TypeError('Некорректная инициализация сокета.')
         super().__init__(clsname, bases, clsdict)
 
 
-class ClientVerifier(type):
+class ClientMaker(type):
+    """
+    Метакласс, проверяющий что в результирующем классе нет серверных
+    вызовов таких как: accept, listen. Также проверяется, что сокет не
+    создаётся внутри конструктора класса.
+    """
     def __init__(cls, clsname, bases, clsdict):
         methods = []
         for func in clsdict:
@@ -45,12 +52,10 @@ class ClientVerifier(type):
         for command in ('accept', 'listen', 'socket'):
             if command in methods:
                 raise TypeError(
-                    'prohibited method usage - detected'
-                )
+                    'В классе обнаружено использование запрещённого метода')
         if 'get_message' in methods or 'send_message' in methods:
             pass
         else:
             raise TypeError(
-                'There is no functions who works with sockets'
-            )
+                'Отсутствуют вызовы функций, работающих с сокетами.')
         super().__init__(clsname, bases, clsdict)
