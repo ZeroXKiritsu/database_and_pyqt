@@ -1,214 +1,21 @@
-import sys
-import json
-import socket
-import time
-import argparse
 import logging
-import threading
 import logs.client_log
+import argparse
+import sys
+from PyQt5.QtWidgets import QApplication
+
 from shared.variables import *
-from shared.utils import *
-from shared.errors import *
+from shared.errors import ServerError
 from shared.wrapper import log
-from shared.metaclasses import ClientVerifier
-from client_database import ClientStorage
+from client.database import ClientStorage
+from client.transport import ClientTransport
+from client.main_window import ClientMainWindow
+from client.start_dialog import UserNameDialog
 
-LOGGER = logging.getLogger('client')
-
-sock_lock = threading.Lock()
-database_lock = threading.Lock()
-
-class ClientOut(threading.Thread, metaclass=ClientVerifier):
-    def __init__(self, account_name, sock, database):
-        self.account_name = account_name
-        self.sock = sock
-        self.database = database
-        super().__init__()
-    
-    def produce_exit_message(self):
-        return {
-            ACTION: EXIT,
-            TIME: time.time(),
-            ACCOUNT_NAME: self.account_name
-        }
-    
-    def produce_message(self):
-        to = input('Send message to user: ')
-        message = input('Enter text message: ')
-
-        with database_lock:
-            if not self.database.check_user(to):
-                LOGGER.error(f'attempt to send message for unregistered user: {to}')
-                return
-
-        message_dict = {
-            ACTION: MESSAGE,
-            SENDER: self.account_name,
-            DESTINATION: to,
-            TIME: time.time(),
-            MESSAGE_TEXT: message
-        }
-        LOGGER.debug(f'message dict is formed: {message_dict}')
-
-        with database_lock:
-            self.database.save_message(self.account_name, to, message)
-
-        with sock_lock:
-            try:
-                send_message(self.sock, message_dict)
-                LOGGER.info(f'Message for user {to} sent')
-            except OSError as err:
-                if err.errno:
-                    LOGGER.critical('connection with server lost.')
-                    exit(1)
-                else:
-                    LOGGER.error('unable to send message. Connection timeout.')
-    
-    def run(self):
-        self.print_help()
-        while True:
-            command = input('Enter command: ')
-            if command == 'm':
-                self.produce_message()
-            elif command == 'h':
-                self.print_help()
-            elif command == 'x':
-                with sock_lock:
-                    try:
-                        send_message(self.sock, self.call_logout())
-                    except:
-                        pass
-                    print('Program closing.')
-                    LOGGER.info('programm will be close by user request')
-                time.sleep(0.5)
-                break
-
-            elif command == 'contacts':
-                with database_lock:
-                    contacts_list = self.database.get_contacts()
-                for contact in contacts_list:
-                    print(contact)
-
-            elif command == 'edit':
-                self.edit_contacts()
-
-            elif command == 'history':
-                self.print_history()
-
-            else:
-                print('Unknown command, please try again.\n'
-                      'h (help) - show list of useful commands')
-    def print_help(self):
-        print('Commands:')
-        print('m - send message')
-        print('history - call a history of messages')
-        print('contacts - list of contacts')
-        print('edit - edit list of contacts')
-        print('h - show list of a commands')
-        print('x - stop program and leave')
-    
-    def print_history(self):
-        ask = input('Show incoming messages - in, outcoming - out, '
-                    'all - just press Enter:')
-        with database_lock:
-            if ask == 'in':
-                history_list = self.database.get_history(to_who=self.account_name)
-                for message in history_list:
-                    print(f'\nUser message: {message[0]} by {message[3]}:\n{message[2]}')
-            elif ask == 'out':
-                history_list = self.database.get_history(from_who=self.account_name)
-                for message in history_list:
-                    print(f'\nMessage to user: {message[1]} by {message[3]}:\n{message[2]}')
-            else:
-                history_list = self.database.get_history()
-                for message in history_list:
-                    print(
-                        f'\nMessage from user:  {message[0]}, to user  {message[1]} by {message[3]}\n{message[2]}')
-    
-    def edit_contacts(self):
-        ans = input('for delete enter - del, to add - add: ')
-        if ans == 'del':
-            edit = input('Enter name of account to delete: ')
-            with database_lock:
-                if self.database.check_contact(edit):
-                    self.database.del_contact(edit)
-                else:
-                    LOGGER.error('attempt to delete unregistred user')
-        elif ans == 'add':
-            edit = input('Create new user, name: ')
-            if self.database.check_user(edit):
-                with database_lock:
-                    self.database.add_contact(edit)
-                with sock_lock:
-                    try:
-                        add_contact(self.sock, self.account_name, edit)
-                    except ServerError:
-                        LOGGER.error('unable to send information on server')
-
-
-class ClientIn(threading.Thread, metaclass=ClientVerifier):
-    def __init__(self, account_name, sock, database):
-        self.account_name = account_name
-        self.sock = sock
-        self.database = database
-        super().__init__()
-
-    def run(self):
-        while True:
-            time.sleep(1)
-            with sock_lock:
-                try:
-                    message = get_message(self.sock)
-
-                except IncorrectDataRecivedError:
-                    LOGGER.error(f'message decoding failed')
-                except OSError as err:
-                    if err.errno:
-                        LOGGER.critical(f'connection with server lost (run)')
-                        break
-                except (ConnectionError, ConnectionAbortedError, ConnectionResetError, json.JSONDecodeError):
-                    LOGGER.critical(f'connection with server was lost')
-                    break
-                else:
-                    if ACTION in message and message[ACTION] == MESSAGE and SENDER in message and DESTINATION in message \
-                            and MESSAGE_TEXT in message and message[DESTINATION] == self.account_name:
-                        print(f'\nReceived message from user {message[SENDER]}:\n{message[MESSAGE_TEXT]}')
-                        with database_lock:
-                            try:
-                                self.database.save_message(message[SENDER], self.account_name, message[MESSAGE_TEXT])
-                            except:
-                                LOGGER.error('error while connect with database')
-
-                        LOGGER.info(f'received message by user {message[SENDER]}:\n{message[MESSAGE_TEXT]}')
-                    else:
-                        LOGGER.error(f'received incorrect message from server: {message}')
+logger = logging.getLogger('client')
 
 @log
-def produce_presence(account_name):
-    out = {
-        ACTION: PRESENCE,
-        TIME: time.time(),
-        USER: {
-            ACCOUNT_NAME: account_name
-        }
-    }
-    LOGGER.debug(
-        f'formed {PRESENCE} message from user {account_name}')
-    return out
-
-@log
-def server_response(message):
-    LOGGER.debug(
-        f'analyzing server request: {message} ')
-    if RESPONSE in message:
-        if message[RESPONSE] == 200:
-            return '200 : OK'
-        elif message[RESPONSE] == 400:
-            raise ServerError(f'400 : {message[ERROR]}')
-    raise ReqFieldMissingError(RESPONSE)
-
-@log
-def argument_parser():
+def arg_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('addr', default=DEFAULT_IP_ADDRESS, nargs='?')
     parser.add_argument('port', default=DEFAULT_PORT, type=int, nargs='?')
@@ -219,158 +26,45 @@ def argument_parser():
     client_name = namespace.name
 
     if not 1023 < server_port < 65536:
-        LOGGER.critical(
-            f'attempt to launch client with wrong port number: {server_port}. '
-            f'ports allowed from 1024 to 65535, process will be closed'
-        )
+        logger.critical(
+            f'Attempt to launch console with incorrect port number: {server_port}. '
+            f'Allowed values in ragne 1024 to 65535. Console closing.')
         exit(1)
 
     return server_address, server_port, client_name
 
+if __name__ == '__main__':
+    server_address, server_port, client_name = arg_parser()
 
-def contacts_list_request(sock, name):
-    LOGGER.debug(f'reuqest of contact list by user {name}')
-    req = {
-        ACTION: GET_CONTACTS,
-        TIME: time.time(),
-        USER: name
-    }
-    LOGGER.debug(f'request formed {req}')
-    send_message(sock, req)
-    ans = get_message(sock)
-    LOGGER.debug(f'answer received {ans}')
-    if RESPONSE in ans and ans[RESPONSE] == 202:
-        return ans[LIST_INFO]
-    else:
-        raise ServerError
-
-
-def add_contact(sock, username, contact):
-    LOGGER.debug(f'creating contact {contact}')
-    req = {
-        ACTION: ADD_CONTACT,
-        TIME: time.time(),
-        USER: username,
-        ACCOUNT_NAME: contact
-    }
-    send_message(sock, req)
-    ans = get_message(sock)
-    if RESPONSE in ans and ans[RESPONSE] == 200:
-        pass
-    else:
-        raise ServerError('Creating contact error')
-    print('successful creating contact')
-
-def user_list_request(sock, username):
-    LOGGER.debug(f'user list request {username}')
-    req = {
-        ACTION: USERS_REQUEST,
-        TIME: time.time(),
-        ACCOUNT_NAME: username
-    }
-    send_message(sock, req)
-    ans = get_message(sock)
-    if RESPONSE in ans and ans[RESPONSE] == 202:
-        return ans[LIST_INFO]
-    else:
-        raise ServerError
-
-
-def remove_contact(sock, username, contact):
-    LOGGER.debug(f'Creating contacts {contact}')
-    req = {
-        ACTION: REMOVE_CONTACT,
-        TIME: time.time(),
-        USER: username,
-        ACCOUNT_NAME: contact
-    }
-    send_message(sock, req)
-    ans = get_message(sock)
-    if RESPONSE in ans and ans[RESPONSE] == 200:
-        pass
-    else:
-        raise ServerError('detele error')
-    print('delete successful')
-
-
-def database_load(sock, database, username):
-    try:
-        users_list = user_list_request(sock, username)
-    except ServerError:
-        LOGGER.error('databse load request error.')
-    else:
-        database.add_users(users_list)
-
-    try:
-        contacts_list = contacts_list_request(sock, username)
-    except ServerError:
-        LOGGER.error('List of contact request error')
-    else:
-        for contact in contacts_list:
-            database.add_contact(contact)
-
-
-def main():
-    print('Welcome to messenger!')
-
-    server_address, server_port, client_name = argument_parser()
+    client_app = QApplication(sys.argv)
 
     if not client_name:
-        client_name = input('Enter your name: ')
-    else:
-        print(f'You logged with name: {client_name}')
+        start_dialog = UserNameDialog()
+        client_app.exec_()
+        if start_dialog.ok_pressed:
+            client_name = start_dialog.client_name.text()
+            del start_dialog
+        else:
+            exit(0)
 
-    LOGGER.info(
-        f'client application was launched with parameters:\n'
-        f'server address: {server_address}\n'
-        f'port: {server_port}, mode: {client_name}')
+    logger.info(
+        f'console launched: server address: {server_address} ,'
+        f' port: {server_port}, name of user: {client_name}')
+
+    database = ClientStorage(client_name)
 
     try:
-        transport = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        transport.settimeout(1)
-
-        transport.connect((server_address, server_port))
-        send_message(transport, produce_presence(client_name))
-        answer = server_response(get_message(transport))
-        LOGGER.info(f'received response from server: {answer}')
-        print(f'Connection to the server has been established')
-    except json.JSONDecodeError:
-        LOGGER.error('failed to decode received Json string')
-        exit(1)
+        transport = ClientTransport(server_port, server_address, database, client_name)
     except ServerError as error:
-        LOGGER.error(f'during attempt to connect, server return error: {error.text}')
+        print(error.text)
         exit(1)
-    except ReqFieldMissingError as missing_error:
-        LOGGER.error(f'in server response has no requested field '
-                     f'{missing_error.missing_field}')
-        exit(1)
-    except (ConnectionRefusedError, ConnectionError):
-        LOGGER.critical(
-            f'connection to server is not available'
-            f' {server_address}:{server_port}, '
-            f'request to connect was refused')
-        exit(1)
-    else:
+    transport.setDaemon(True)
+    transport.start()
 
-        database = ClientStorage(client_name)
-        database_load(transport, database, client_name)
+    main_window = ClientMainWindow(database, transport)
+    main_window.make_connection(transport)
+    main_window.setWindowTitle(f'chat program (alpha release) - {client_name}')
+    client_app.exec_()
 
-        module_sender = ClientOut(client_name, transport, database)
-        module_sender.daemon = True
-        module_sender.start()
-        LOGGER.debug('Запущены процессы')
-
-        module_receiver = ClientIn(client_name, transport, database)
-        module_receiver.daemon = True
-        module_receiver.start()
-
-        while True:
-            time.sleep(1)
-            if module_receiver.is_alive() and module_sender.is_alive():
-                continue
-            break
-
-
-if __name__ == '__main__':
-    main()
+    transport.transport_shutdown()
+    transport.join()

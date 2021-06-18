@@ -1,6 +1,9 @@
 from sqlalchemy import create_engine, Table, Column, Integer, String, Text, MetaData, DateTime
 from sqlalchemy.orm import mapper, sessionmaker
-from sqlalchemy.orm.session import Session
+import os
+import sys
+
+sys.path.append('../')
 from shared.variables import *
 import datetime
 
@@ -25,7 +28,9 @@ class ClientStorage:
 
     
     def __init__(self, name):
-        self.engine = create_engine(f'sqlite:///client_{name}.db3', echo=False, pool_recycle=7200, connect_args={'check_same_thread': False})
+        path = os.path.dirname(os.path.realpath(__file__))
+        file_name = f'client_{name}.db3'
+        self.engine = create_engine(f'sqlite:///{os.path.join(path, file_name)}', echo=False, pool_recycle=7200, connect_args={'check_same_thread': False})
         self.metadata = MetaData()
 
         users = Table('users', self.metadata,
@@ -110,22 +115,4 @@ class ClientStorage:
 
 if __name__ == '__main__':
     test_db = ClientStorage('test1')
-    for i in ['test3', 'test4', 'test5']:
-        test_db.add_contact(i)
-    test_db.add_contact('test4')
-    test_db.add_users(['test1', 'test2', 'test3', 'test4', 'test5'])
-    test_db.save_message(
-        'test1', 'test2',
-        f'Hello! im test message from {datetime.datetime.now()}!')
-    test_db.save_message(
-        'test2', 'test1',
-        f'Hello! im another test message from {datetime.datetime.now()}!')
-    print(test_db.get_contacts())
-    print(test_db.get_users())
-    print(test_db.check_user('test1'))
-    print(test_db.check_user('test10'))
-    print(test_db.get_history('test2'))
-    print(test_db.get_history(to_who='test2'))
-    print(test_db.get_history('test3'))
-    test_db.del_contact('test4')
-    print(test_db.get_contacts())            
+    print(sorted(test_db.get_history('test2'), key=lambda item: item[3]))        
